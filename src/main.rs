@@ -3,13 +3,13 @@
 use std::str::FromStr;
 
 use regex::Regex;
-use vgtk::lib::gio::{ApplicationFlags, File, FileExt};
-use vgtk::lib::glib::object::IsA;
+use vgtk::grid::GridProps;
+use vgtk::lib::gio::{ActionExt, ApplicationFlags, File, FileExt, SimpleAction};
 use vgtk::lib::glib::Error;
 use vgtk::lib::gtk::{
     prelude::*, Align, Application, ApplicationWindow, Button, ButtonsType, DialogFlags, Entry,
     FileChooserAction, FileChooserNative, Grid, HeaderBar, Label, ListBox, MessageType,
-    ResponseType, ScrolledWindow, SelectionMode, Widget, Window,
+    ResponseType, ScrolledWindow, SelectionMode, Window,
 };
 use vgtk::{ext::*, gtk, on_signal, run, Component, UpdateAction, VNode};
 
@@ -71,10 +71,23 @@ impl FromStr for RustError {
     }
 }
 
+#[derive(Clone, Debug)]
+enum AppState {
+    Idle,
+    Watching,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        AppState::Idle
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct Model {
     root_folder: Option<File>,
     errors: Vec<RustError>,
+    state: AppState,
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +96,7 @@ enum Message {
     FolderSelected(File),
     SelectFolder,
     FileError(Error),
+    ToggleWatch,
     Exit,
 }
 
@@ -116,6 +130,13 @@ impl Component for Model {
                 self.root_folder = Some(file);
                 UpdateAction::Render
             }
+            Message::ToggleWatch => {
+                self.state = match self.state {
+                    AppState::Watching => AppState::Idle,
+                    AppState::Idle => AppState::Watching,
+                };
+                UpdateAction::Render
+            },
             Message::Exit => {
                 vgtk::quit();
                 UpdateAction::None
@@ -126,76 +147,43 @@ impl Component for Model {
     fn view(&self) -> VNode<Model> {
         gtk! {
             <Application::new_unwrap(Some("in.nerdworks.watch-rust-errors"), ApplicationFlags::empty())>
+
+                <SimpleAction::new("quit", None) Application::accels=["<Ctrl>q"].as_ref() enabled=true
+                        on activate=|a, _| Message::Exit/>
+
                 <ApplicationWindow default_width=800 default_height=480 border_width=20 on destroy=|_| Message::Exit>
                     <HeaderBar title="Watch Rust Errors" show_close_button=true />
                     <Grid row_spacing=10 column_spacing=10>
                         // Row 0
-                        <Label label="Project Root:" Grid::position=GridPosition::default() />
-                        <Entry Grid::position=GridPosition { left: 1, ..Default::default() }
-                               hexpand=true text=self
-                                    .root_folder
-                                    .as_ref()
-                                    .and_then(|f| f.get_path())
-                                    .and_then(|p| p.into_os_string().into_string().ok())
-                                    .unwrap_or_else(|| "".to_string()) />
-                        <Button label="..." Grid::position=GridPosition { left: 2, ..Default::default() }
-                            on clicked=|_| Message::SelectFolder />
+                        <Label label="Project Root:" halign=Align::End />
+                        <Entry Grid::left=1 hexpand=true text=self
+                            .root_folder
+                            .as_ref()
+                            .and_then(|f| f.get_path())
+                            .and_then(|p| p.into_os_string().into_string().ok())
+                            .unwrap_or_else(|| "".to_string()) />
+                        <Button label="..." Grid::left=2 on clicked=|_| Message::SelectFolder />
 
                         // Row 1
-                        <Label label="Command:" halign=Align::End Grid::position=GridPosition { top: 1, ..Default::default() } />
-                        <Entry Grid::position=GridPosition { left: 1, top: 1, ..Default::default() } hexpand=true />
-                        <Button label="Start Watching" Grid::position=GridPosition { left: 2, top: 1, ..Default::default() } />
+                        <Label label="Command:" halign=Align::End Grid::top=1 />
+                        <Entry Grid::left=1 Grid::top=1 hexpand=true />
+                        <Button label={
+                            match self.state {
+                                AppState::Idle => "Start Watching",
+                                AppState::Watching => "Stop Watching",
+                            }}
+                            Grid::left=2
+                            Grid::top=1
+                            on clicked=|button| Message::ToggleWatch />
 
                         // Row 2
-                        <ScrolledWindow Grid::position=GridPosition { top: 2, width: 3, ..Default::default() } hexpand=true vexpand=true>
+                        <ScrolledWindow Grid::top=2 Grid::width=3 hexpand=true vexpand=true>
                             <ListBox selection_mode=SelectionMode::None>
                             </ListBox>
                         </ScrolledWindow>
                     </Grid>
                 </ApplicationWindow>
             </Application>
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct GridPosition {
-    left: i32,
-    top: i32,
-    width: i32,
-    height: i32,
-}
-
-impl Default for GridPosition {
-    fn default() -> Self {
-        GridPosition {
-            left: 0,
-            top: 0,
-            width: 1,
-            height: 1,
-        }
-    }
-}
-
-trait GridProps {
-    fn set_child_position<P: IsA<Widget>>(&self, child: &P, position: GridPosition);
-    fn get_child_position<P: IsA<Widget>>(&self, child: &P) -> GridPosition;
-}
-
-impl GridProps for Grid {
-    fn set_child_position<P: IsA<Widget>>(&self, child: &P, position: GridPosition) {
-        self.set_cell_left_attach(child, position.left);
-        self.set_cell_top_attach(child, position.top);
-        self.set_cell_width(child, position.width);
-        self.set_cell_height(child, position.height);
-    }
-
-    fn get_child_position<P: IsA<Widget>>(&self, child: &P) -> GridPosition {
-        GridPosition {
-            left: self.get_cell_left_attach(child),
-            top: self.get_cell_top_attach(child),
-            width: self.get_cell_width(child),
-            height: self.get_cell_height(child),
         }
     }
 }
