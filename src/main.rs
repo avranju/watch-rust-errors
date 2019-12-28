@@ -1,5 +1,8 @@
 #![recursion_limit = "512"]
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use glib::{
     source::{Continue, SourceId},
     MainContext,
@@ -10,8 +13,8 @@ use vgtk::lib::gio::{ActionExt, ApplicationFlags, File, FileExt, SimpleAction};
 use vgtk::lib::glib::Error;
 use vgtk::lib::gtk::{
     prelude::*, Align, Application, ApplicationWindow, Button, ButtonsType, DialogFlags, Entry,
-    EntryExt, FileChooserAction, FileChooserNative, Grid, HeaderBar, Label, ListBox, MessageType,
-    ResponseType, ScrolledWindow, SelectionMode, Window,
+    EntryExt, FileChooserAction, FileChooserNative, Grid, HeaderBar, Label, ListBox, ListBoxRow,
+    MessageType, ResponseType, ScrolledWindow, SelectionMode, Window,
 };
 use vgtk::{ext::*, gtk, on_signal, run, Component, UpdateAction, VNode};
 
@@ -63,7 +66,7 @@ enum Message {
 struct Model {
     project_root: String,
     command: String,
-    results: Option<CompileResult>,
+    results: Option<Rc<RefCell<CompileResult>>>,
     state: AppState,
     watcher: Option<Watcher>,
     receiver_id: Option<SourceId>,
@@ -79,6 +82,36 @@ impl Default for Model {
             watcher: None,
             receiver_id: None,
         }
+    }
+}
+
+impl Model {
+    fn render_results<'a>(&'a self) -> impl Iterator<Item = VNode<Model>> + 'a {
+        self.results
+            .iter()
+            .flat_map(|v| {
+                let result = v.borrow().clone();
+                let output = if result.success {
+                    "Compile succeeded.".to_string()
+                } else {
+                    "Compile failed.".to_string()
+                };
+
+                result
+                    .errors
+                    .into_iter()
+                    .map(|d| d.to_string())
+                    .chain(result.warnings.into_iter().map(|d| d.to_string()))
+                    .chain(vec![output])
+            })
+            .map(|result| {
+                let label = format!("<span font_family=\"monospace\">{}</span>", result);
+                gtk! {
+                    <ListBoxRow>
+                        <Label label=label use_markup=true />
+                    </ListBoxRow>
+                }
+            })
     }
 }
 
@@ -133,6 +166,9 @@ impl Component for Model {
                             .unwrap();
                         source.destroy();
 
+                        // clear output
+                        self.results = None;
+
                         AppState::Idle
                     }
 
@@ -148,9 +184,12 @@ impl Component for Model {
                             Some(watcher)
                         };
 
-                        self.receiver_id = Some(receiver.attach(None, |result| {
+                        let results = self.results.clone();
+                        self.receiver_id = Some(receiver.attach(None, move |result| {
                             // add the results to UI
-                            println!("{:#?}", result);
+                            println!("{}", result);
+                            *results.as_ref().unwrap().borrow_mut() = result;
+
                             Continue(true)
                         }));
 
@@ -171,7 +210,7 @@ impl Component for Model {
             }
 
             Message::ClearOutput => {
-                self.results = None;
+                // self.results = None;
                 UpdateAction::Render
             }
 
@@ -229,6 +268,9 @@ impl Component for Model {
                         // Row 2
                         <ScrolledWindow Grid::top=2 Grid::width=3 hexpand=true vexpand=true>
                             <ListBox selection_mode=SelectionMode::None>
+                               {
+                                   self.render_results()
+                               }
                             </ListBox>
                         </ScrolledWindow>
 

@@ -12,4 +12,4 @@ glib = "0.9.0"
 lazy_static = "1.4"
 regex = "1.3"
 vgtk = { git = "https://github.com/bodil/vgtk.git", rev = "a70fa146ed9cd9dc6040bd3bf5d0a31dc45a7f37" }
-watchexec = "1.12.0"
+watchexec = { git = "https://github.com/avranju/watchexec", branch = "lib-support", default-features = false, features = ["lib"] }

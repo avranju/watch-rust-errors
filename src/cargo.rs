@@ -1,3 +1,4 @@
+use std::fmt::{self, Display};
 use std::ops::Deref;
 use std::path::Path;
 use std::process::Command;
@@ -10,6 +11,24 @@ pub struct CompileResult {
     pub success: bool,
     pub errors: Vec<RustDiagnostic>,
     pub warnings: Vec<RustDiagnostic>,
+}
+
+impl Display for CompileResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for err in self.errors.iter() {
+            write!(f, "{}", err)?;
+        }
+
+        for wrn in self.warnings.iter() {
+            write!(f, "{}", wrn)?;
+        }
+
+        if self.success {
+            write!(f, "Compile succeeded.")
+        } else {
+            write!(f, "Compile failed.")
+        }
+    }
 }
 
 enum ParseState {
