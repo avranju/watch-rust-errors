@@ -1,19 +1,21 @@
 #![recursion_limit = "512"]
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use glib::{
     source::{Continue, SourceId},
     MainContext,
 };
-
-use vgtk::grid::GridProps;
 use vgtk::lib::gio::{ActionExt, ApplicationFlags, File, FileExt, SimpleAction};
 use vgtk::lib::glib::Error;
 use vgtk::lib::gtk::{
     prelude::*, Align, Application, ApplicationWindow, Button, ButtonsType, DialogFlags, Entry,
-    EntryExt, FileChooserAction, FileChooserNative, Grid, HeaderBar, Label, ListBox, MessageType,
-    ResponseType, ScrolledWindow, SelectionMode, Window,
+    EntryExt, FileChooserAction, FileChooserNative, Grid, HeaderBar, Label, ListBox, ListBoxRow,
+    MessageType, ResponseType, ScrolledWindow, SelectionMode, Window,
 };
 use vgtk::{ext::*, gtk, on_signal, run, Component, UpdateAction, VNode};
+use vgtk::scope::Scope;
 
 mod cargo;
 mod rust;
@@ -56,35 +58,72 @@ enum Message {
     PathChanged(String),
     CommandChanged(String),
     ToggleWatch,
-    ClearOutput,
+    Refresh,
     Exit,
 }
 
 struct Model {
     project_root: String,
     command: String,
-    results: Option<CompileResult>,
+    results: Rc<RefCell<Option<CompileResult>>>,
     state: AppState,
     watcher: Option<Watcher>,
     receiver_id: Option<SourceId>,
+    scope: Option<Scope<Self>>,
 }
 
 impl Default for Model {
     fn default() -> Self {
         Model {
-            project_root: "/home/avranju/code/glib-channel".to_string(),
+            project_root: "".to_string(),
             command: "cargo check".to_string(),
-            results: None,
+            results: Rc::new(RefCell::new(None)),
             state: AppState::default(),
             watcher: None,
             receiver_id: None,
+            scope: None,
         }
+    }
+}
+
+impl Model {
+    fn render_results<'a>(&'a self) -> impl Iterator<Item = VNode<Model>> + 'a {
+        self.results
+            .borrow()
+            .clone()
+            .into_iter()
+            .flat_map(|result| {
+                let output = if result.success {
+                    "Compile succeeded.".to_string()
+                } else {
+                    "Compile failed.".to_string()
+                };
+
+                result
+                    .errors
+                    .into_iter()
+                    .map(|d| d.to_string())
+                    .chain(result.warnings.into_iter().map(|d| d.to_string()))
+                    .chain(vec![output])
+            })
+            .map(|result| {
+                let label = format!("<span font_family=\"monospace\">{}</span>", result);
+                gtk! {
+                    <ListBoxRow>
+                        <Label label=label use_markup=true halign=Align::Start />
+                    </ListBoxRow>
+                }
+            })
     }
 }
 
 impl Component for Model {
     type Message = Message;
     type Properties = ();
+
+    fn init(&mut self, scope: Scope<Self>) {
+        self.scope = Some(scope);
+    }
 
     fn update(&mut self, msg: Self::Message) -> UpdateAction<Self> {
         match msg {
@@ -133,6 +172,9 @@ impl Component for Model {
                             .unwrap();
                         source.destroy();
 
+                        // clear output
+                        self.results.borrow_mut().take();
+
                         AppState::Idle
                     }
 
@@ -148,9 +190,13 @@ impl Component for Model {
                             Some(watcher)
                         };
 
-                        self.receiver_id = Some(receiver.attach(None, |result| {
+                        let results = self.results.clone();
+                        let scope = self.scope.as_ref().unwrap().clone();
+                        self.receiver_id = Some(receiver.attach(None, move |result| {
                             // add the results to UI
-                            println!("{:#?}", result);
+                            *results.borrow_mut() = Some(result);
+                            scope.send_message(Message::Refresh);
+
                             Continue(true)
                         }));
 
@@ -170,10 +216,7 @@ impl Component for Model {
                 UpdateAction::None
             }
 
-            Message::ClearOutput => {
-                self.results = None;
-                UpdateAction::Render
-            }
+            Message::Refresh => UpdateAction::Render,
 
             Message::Exit => {
                 vgtk::quit();
@@ -224,19 +267,16 @@ impl Component for Model {
                         <Button label={ self.state.map(|| "Start Watching", || "Stop Watching") }
                             Grid::left=2
                             Grid::top=1
-                            on clicked=|button| Message::ToggleWatch />
+                            on clicked=|_| Message::ToggleWatch />
 
                         // Row 2
                         <ScrolledWindow Grid::top=2 Grid::width=3 hexpand=true vexpand=true>
                             <ListBox selection_mode=SelectionMode::None>
+                               {
+                                   self.render_results()
+                               }
                             </ListBox>
                         </ScrolledWindow>
-
-                        // Row 3
-                        <Button label="Clear Output"
-                            Grid::left=2
-                            Grid::top=3
-                            on clicked=|_| Message::ClearOutput />
                     </Grid>
                 </ApplicationWindow>
             </Application>

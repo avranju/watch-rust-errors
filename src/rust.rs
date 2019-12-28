@@ -1,3 +1,4 @@
+use std::fmt::{self, Display};
 use std::str::FromStr;
 
 use lazy_static::lazy_static;
@@ -12,6 +13,15 @@ lazy_static! {
 pub enum Type {
     Error,
     Warning,
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Type::Error => write!(f, "error"),
+            Type::Warning => write!(f, "warning"),
+        }
+    }
 }
 
 impl FromStr for Type {
@@ -56,6 +66,41 @@ impl RustDiagnostic {
             column,
             details: details.map(ToString::to_string),
         }
+    }
+}
+
+impl Display for RustDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}{}: {}\n",
+            self.type_,
+            self.num
+                .as_ref()
+                .map(|n| format!("[{}]", n))
+                .unwrap_or_else(|| "".to_string()),
+            self.message
+        )?;
+
+        if self.file.is_some() {
+            write!(
+                f,
+                "  --> {}:{}:{}\n",
+                self.file.as_ref().unwrap(),
+                self.line
+                    .map(|l| l.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                self.column
+                    .map(|l| l.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            )?;
+        }
+
+        if self.details.is_some() {
+            write!(f, "{}\n", self.details.as_ref().unwrap())?;
+        }
+
+        Ok(())
     }
 }
 
